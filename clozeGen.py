@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
+import html
 import random
 import re
 import sys
@@ -51,19 +52,59 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         line-height: 1.6;
         transition: background-color 0.3s, color 0.3s;
     }
-    .toolbar {
-        position: sticky;
-        top: 0;
-        background: var(--panel-bg);
-        padding: 10px 20px;
-        border-bottom: 1px solid var(--border);
+    .menu-toggle {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 1100;
+        width: 44px;
+        height: 44px;
         display: flex;
-        flex-wrap: wrap;
-        gap: 15px;
+        flex-direction: column;
+        justify-content: center;
         align-items: center;
+        gap: 5px;
+        background: var(--panel-bg);
+        color: var(--text-color);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        cursor: pointer;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    }
+    .menu-toggle span {
+        width: 20px;
+        height: 2px;
+        background: var(--text-color);
+        border-radius: 2px;
+    }
+    .toolbar {
+        position: fixed;
+        top: 64px;
+        right: 12px;
+        width: min(360px, calc(100vw - 24px));
+        max-height: calc(100vh - 84px);
+        overflow-y: auto;
+        background: var(--panel-bg);
+        padding: 14px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        align-items: stretch;
         z-index: 1000;
         font-family: sans-serif;
         font-size: 0.9rem;
+        box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22);
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-8px);
+        transition: opacity 0.2s, transform 0.2s;
+    }
+    .toolbar.open {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0);
     }
     .toolbar button {
         background: var(--btn-bg);
@@ -73,11 +114,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         border-radius: 4px;
         cursor: pointer;
         transition: background 0.2s;
+        text-align: left;
     }
     .toolbar button:hover { background: var(--btn-hover); }
     .slider-container { display: flex; align-items: center; gap: 8px; }
-    .progress-container { flex-grow: 1; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
-    .progress-bar-bg { width: 120px; height: 10px; background: var(--border); border-radius: 5px; overflow: hidden; }
+    .slider-container input { flex: 1; }
+    .progress-container { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .progress-bar-bg { flex: 1 1 120px; height: 10px; background: var(--border); border-radius: 5px; overflow: hidden; }
     .progress-bar-fill { height: 100%; background: var(--correct); width: 0%; transition: width 0.3s; }
     .container { max-width: 800px; margin: 30px auto; padding: 0 20px; font-size: 1.25rem; }
     .segment { margin-bottom: 1.5em; }
@@ -118,7 +161,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div class="toolbar">
+<button class="menu-toggle" id="btn-menu" aria-label="Open menu" aria-controls="toolbar" aria-expanded="false">
+    <span></span>
+    <span></span>
+    <span></span>
+</button>
+<div class="toolbar" id="toolbar" aria-hidden="true">
     <button id="btn-reshuffle" title="Shortcut: Ctrl+R">New Test</button>
     <button id="btn-reveal" title="Shortcut: Ctrl+H">Reveal All</button>
     <button id="btn-reset">Reset</button>
@@ -126,7 +174,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <button id="btn-dark">Dark Mode</button>
     <div class="slider-container" title="Target Hide Rate">
         <label for="hide-rate">Hide Rate:</label>
-        <input type="range" id="hide-rate" min="5" max="30" value="{{HIDE_RATE_PERCENT}}">
+        <input type="range" id="hide-rate" min="5" max="100" value="{{HIDE_RATE_PERCENT}}">
         <span id="rate-val">{{HIDE_RATE_PERCENT}}%</span>
     </div>
     <div class="progress-container">
@@ -146,15 +194,27 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 <script>
     const HASH = "{{HASH}}";
+    const STORAGE_KEY = 'pali_memo_state_' + HASH;
+    const LEGACY_STORAGE_KEY = 'pali_memo_' + HASH;
     let hideRate = {{HIDE_RATE}};
     let sentenceMode = false;
     let currentSentenceIndex = 0;
+    let isRestoring = false;
+    let pendingRestoreScrollY = null;
 
     function init() {
         bindEvents();
-        updateProgress();
-        loadProgress();
+        isRestoring = true;
+        restoreState();
         setupSentenceMode();
+        updateProgress();
+        requestAnimationFrame(() => {
+            if (!sentenceMode && Number.isFinite(pendingRestoreScrollY)) {
+                window.scrollTo(0, pendingRestoreScrollY);
+            }
+            isRestoring = false;
+            updateProgress();
+        });
     }
 
     function checkAnswer(input) {
@@ -177,17 +237,33 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         document.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.key.toLowerCase() === 'r') { e.preventDefault(); reshuffle(); }
             if (e.ctrlKey && e.key.toLowerCase() === 'h') { e.preventDefault(); toggleAnswers(); }
+            if (e.key === 'Escape') closeMenu();
         });
+
+        document.addEventListener('click', (e) => {
+            const toolbar = document.getElementById('toolbar');
+            const menuButton = document.getElementById('btn-menu');
+            if (!toolbar.contains(e.target) && !menuButton.contains(e.target)) closeMenu();
+        });
+
+        window.addEventListener('beforeunload', saveState);
+        window.addEventListener('pagehide', saveState);
+        window.addEventListener('scroll', debounce(saveState, 250), {passive: true});
 
         document.getElementById('text-container').addEventListener('keyup', (e) => {
             if (e.target.tagName === 'INPUT' && e.target.classList.contains('cloze')) {
                 if (e.key === 'Enter') checkAnswer(e.target);
+                saveState();
             }
+        });
+        document.getElementById('text-container').addEventListener('input', (e) => {
+            if (e.target.tagName === 'INPUT' && e.target.classList.contains('cloze')) saveState();
         });
 
         document.getElementById('hide-rate').addEventListener('input', (e) => {
             hideRate = e.target.value / 100;
             document.getElementById('rate-val').textContent = e.target.value + '%';
+            saveState();
         });
         document.getElementById('hide-rate').addEventListener('change', reshuffle);
         document.getElementById('btn-reset').addEventListener('click', reset);
@@ -196,19 +272,49 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         document.getElementById('btn-mode').addEventListener('click', toggleMode);
         document.getElementById('btn-dark').addEventListener('click', () => {
             document.body.classList.toggle('dark-mode');
+            saveState();
         });
         document.getElementById('btn-prev').addEventListener('click', () => showSentence(currentSentenceIndex - 1));
         document.getElementById('btn-next').addEventListener('click', () => showSentence(currentSentenceIndex + 1));
+        document.getElementById('btn-menu').addEventListener('click', toggleMenu);
+    }
+
+    function makeSpanFromInput(inp) {
+        const span = document.createElement('span');
+        span.className = 'hideable';
+        span.dataset.id = inp.dataset.id;
+        span.dataset.word = inp.dataset.answer;
+        span.dataset.context = inp.dataset.context;
+        span.textContent = inp.dataset.answer;
+        return span;
+    }
+
+    function makeInputFromSpan(span) {
+        const inp = document.createElement('input');
+        inp.className = 'cloze';
+        inp.type = 'text';
+        inp.dataset.id = span.dataset.id;
+        inp.dataset.answer = span.dataset.word;
+        inp.dataset.context = span.dataset.context;
+        inp.size = span.dataset.word.length;
+        inp.setAttribute('aria-label', 'Context: ' + span.dataset.context);
+        return inp;
+    }
+
+    function applyHiddenIds(hiddenIds) {
+        const ids = new Set(hiddenIds.map(String));
+        document.querySelectorAll('input.cloze').forEach(inp => {
+            inp.replaceWith(makeSpanFromInput(inp));
+        });
+
+        document.querySelectorAll('.hideable').forEach(span => {
+            if (ids.has(span.dataset.id)) span.replaceWith(makeInputFromSpan(span));
+        });
     }
 
     function reshuffle() {
         document.querySelectorAll('input.cloze').forEach(inp => {
-            const span = document.createElement('span');
-            span.className = 'hideable';
-            span.dataset.word = inp.dataset.answer;
-            span.dataset.context = inp.dataset.context;
-            span.textContent = inp.dataset.answer;
-            inp.replaceWith(span);
+            inp.replaceWith(makeSpanFromInput(inp));
         });
 
         const spans = Array.from(document.querySelectorAll('.hideable'));
@@ -217,14 +323,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         for (let i = 0; i < toHide; i++) {
             const span = spans[i];
-            const inp = document.createElement('input');
-            inp.className = 'cloze';
-            inp.type = 'text';
-            inp.dataset.answer = span.dataset.word;
-            inp.dataset.context = span.dataset.context;
-            inp.size = span.dataset.word.length;
-            inp.setAttribute('aria-label', 'Context: ' + span.dataset.context);
-            span.replaceWith(inp);
+            span.replaceWith(makeInputFromSpan(span));
         }
         resetProgress();
         setupSentenceMode();
@@ -260,21 +359,90 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const correct = document.querySelectorAll('input.cloze.correct').length;
         document.getElementById('progress-text').textContent = correct + ' / ' + total;
         document.getElementById('progress-bar').style.width = (total === 0 ? 0 : (correct/total)*100) + '%';
-        if (total > 0) localStorage.setItem('pali_memo_' + HASH, JSON.stringify({correct, total}));
+        saveState();
     }
 
     function resetProgress() {
-        localStorage.removeItem('pali_memo_' + HASH);
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
         updateProgress();
     }
 
-    function loadProgress() {
-        const stored = localStorage.getItem('pali_memo_' + HASH);
-        if (stored) {
+    function getClozeState() {
+        const answers = {};
+        const hiddenIds = [];
+        document.querySelectorAll('input.cloze').forEach(inp => {
+            const id = inp.dataset.id;
+            hiddenIds.push(id);
+            answers[id] = {
+                value: inp.value,
+                correct: inp.classList.contains('correct'),
+                readOnly: inp.readOnly
+            };
+        });
+        return {answers, hiddenIds};
+    }
+
+    function saveState() {
+        if (isRestoring) return;
+        const total = document.querySelectorAll('input.cloze').length;
+        const correct = document.querySelectorAll('input.cloze.correct').length;
+        const clozeState = getClozeState();
+        const state = {
+            correct,
+            total,
+            hideRate,
+            darkMode: document.body.classList.contains('dark-mode'),
+            sentenceMode,
+            currentSentenceIndex,
+            scrollY: window.scrollY,
+            answers: clozeState.answers,
+            hiddenIds: clozeState.hiddenIds,
+            savedAt: new Date().toISOString()
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function restoreState() {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+        if (!stored && legacy) {
             try {
-                const p = JSON.parse(stored);
+                const p = JSON.parse(legacy);
                 document.getElementById('last-session').textContent = `Last session: ${p.correct}/${p.total}`;
-            } catch(e){}
+            } catch(e) {}
+            return;
+        }
+        if (!stored) return;
+
+        try {
+            const state = JSON.parse(stored);
+            if (typeof state.hideRate === 'number') {
+                hideRate = state.hideRate;
+                const percent = Math.round(hideRate * 100);
+                document.getElementById('hide-rate').value = percent;
+                document.getElementById('rate-val').textContent = percent + '%';
+            }
+            if (state.darkMode) document.body.classList.add('dark-mode');
+            if (Array.isArray(state.hiddenIds)) applyHiddenIds(state.hiddenIds);
+            if (state.answers) {
+                document.querySelectorAll('input.cloze').forEach(inp => {
+                    const saved = state.answers[inp.dataset.id];
+                    if (!saved) return;
+                    inp.value = saved.value || '';
+                    inp.readOnly = Boolean(saved.readOnly);
+                    inp.classList.toggle('correct', Boolean(saved.correct));
+                });
+            }
+            sentenceMode = Boolean(state.sentenceMode);
+            currentSentenceIndex = Number.isInteger(state.currentSentenceIndex) ? state.currentSentenceIndex : 0;
+            if (state.total > 0) {
+                document.getElementById('last-session').textContent = `Last session: ${state.correct}/${state.total}`;
+            }
+            if (!sentenceMode && Number.isFinite(state.scrollY)) {
+                pendingRestoreScrollY = state.scrollY;
+            }
+        } catch(e) {
+            localStorage.removeItem(STORAGE_KEY);
         }
     }
 
@@ -282,10 +450,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         sentenceMode = !sentenceMode;
         document.getElementById('btn-mode').textContent = sentenceMode ? 'Full Text Mode' : 'Sentence Mode';
         setupSentenceMode();
+        saveState();
     }
 
     function setupSentenceMode() {
         const segments = document.querySelectorAll('.segment');
+        document.getElementById('btn-mode').textContent = sentenceMode ? 'Full Text Mode' : 'Sentence Mode';
         if (!sentenceMode) {
             segments.forEach(s => s.style.display = '');
             document.getElementById('sentence-nav').style.display = 'none';
@@ -302,6 +472,32 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         currentSentenceIndex = index;
         segments.forEach((s, i) => s.style.display = (i === index) ? '' : 'none');
         document.getElementById('sentence-nav').style.display = 'flex';
+        saveState();
+    }
+
+    function toggleMenu() {
+        const toolbar = document.getElementById('toolbar');
+        const menuButton = document.getElementById('btn-menu');
+        const open = !toolbar.classList.contains('open');
+        toolbar.classList.toggle('open', open);
+        toolbar.setAttribute('aria-hidden', String(!open));
+        menuButton.setAttribute('aria-expanded', String(open));
+    }
+
+    function closeMenu() {
+        const toolbar = document.getElementById('toolbar');
+        const menuButton = document.getElementById('btn-menu');
+        toolbar.classList.remove('open');
+        toolbar.setAttribute('aria-hidden', 'true');
+        menuButton.setAttribute('aria-expanded', 'false');
+    }
+
+    function debounce(fn, delay) {
+        let timer;
+        return function() {
+            clearTimeout(timer);
+            timer = setTimeout(fn, delay);
+        };
     }
 
     window.addEventListener('DOMContentLoaded', init);
@@ -413,11 +609,14 @@ def main():
             prev_w = candidates[idx-1] if idx > 0 else ""
             next_w = candidates[idx+1] if idx < len(candidates)-1 else ""
             ctx = f"{prev_w} ___ {next_w}".strip()
+            word_attr = html.escape(word, quote=True)
+            ctx_attr = html.escape(ctx, quote=True)
+            word_text = html.escape(word)
             
             if idx in indices_to_hide:
-                return f'<input class="cloze" type="text" data-answer="{word}" data-context="{ctx}" size="{len(word)}" aria-label="Context: {ctx}">'
+                return f'<input class="cloze" type="text" data-id="{idx}" data-answer="{word_attr}" data-context="{ctx_attr}" size="{len(word)}" aria-label="Context: {ctx_attr}">'
             else:
-                return f'<span class="hideable" data-word="{word}" data-context="{ctx}">{word}</span>'
+                return f'<span class="hideable" data-id="{idx}" data-word="{word_attr}" data-context="{ctx_attr}">{word_text}</span>'
 
         final_html_parts.append(re.sub(r'__CLOZE_(\d+)__', repl, chunk))
 
