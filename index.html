@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pali Memorizer</title>
+<title>Pātimokkha Recitation &amp; Memorizer | Bhikkhupātimokkhapāḷi</title>
 <style>
     :root {
         --bg-color: #fcfcfc;
@@ -152,6 +152,58 @@
     .sentence-nav button { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: var(--btn-bg); color: var(--text-color); border: 1px solid var(--border); border-radius: 4px; }
     .sentence-nav button:hover { background: var(--btn-hover); }
     #script-select { background: var(--input-bg); color: var(--text-color); border: 1px solid var(--border); border-radius: 4px; padding: 2px; }
+    .fab-container {
+        position: fixed;
+        bottom: 24px;
+        right: 20px;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        align-items: flex-end;
+    }
+    .fab-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--panel-bg);
+        color: var(--text-color);
+        border: 1px solid var(--border);
+        padding: 10px 16px;
+        border-radius: 30px;
+        font-family: sans-serif;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        transition: transform 0.2s, box-shadow 0.2s, background-color 0.2s;
+    }
+    .fab-btn:hover {
+        background: var(--btn-hover);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+    }
+    .fab-btn:active {
+        transform: translateY(0);
+    }
+    .fab-btn svg {
+        width: 16px;
+        height: 16px;
+        fill: currentColor;
+    }
+    @media (max-width: 600px) {
+        .fab-container {
+            bottom: 16px;
+            right: 14px;
+            gap: 8px;
+        }
+        .fab-btn {
+            padding: 8px 14px;
+            font-size: 0.85rem;
+        }
+    }
 </style>
 <script>
 /**
@@ -214,6 +266,17 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
         <span id="progress-text">0 / 773</span>
         <div class="progress-bar-bg"><div id="progress-bar" class="progress-bar-fill"></div></div>
     </div>
+</div>
+
+<div class="fab-container" id="fab-container">
+    <button class="fab-btn" id="fab-reshuffle" title="New Test (Shortcut: Ctrl+R)" aria-label="New Test">
+        <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+        <span>New Test</span>
+    </button>
+    <button class="fab-btn" id="fab-reveal" title="Reveal All (Shortcut: Ctrl+H)" aria-label="Reveal All">
+        <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+        <span>Reveal All</span>
+    </button>
 </div>
 
 <div class="container" id="text-container">
@@ -909,6 +972,8 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
         document.getElementById('btn-reset').addEventListener('click', reset);
         document.getElementById('btn-reveal').addEventListener('click', revealAll);
         document.getElementById('btn-reshuffle').addEventListener('click', reshuffle);
+        document.getElementById('fab-reveal').addEventListener('click', revealAll);
+        document.getElementById('fab-reshuffle').addEventListener('click', reshuffle);
         document.getElementById('btn-mode').addEventListener('click', toggleMode);
         document.getElementById('btn-dark').addEventListener('click', () => {
             document.body.classList.toggle('dark-mode');
