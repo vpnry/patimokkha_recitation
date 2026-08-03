@@ -120,10 +120,17 @@
         border-bottom: 2px solid var(--input-border);
         text-align: center;
         margin: 0 2px;
-        padding: 0 2px;
+        padding: 0 4px;
         outline: none;
         border-radius: 0;
-        transition: border-color 0.2s;
+        transition: border-color 0.2s, background-color 0.2s;
+        box-sizing: border-box;
+        max-width: 100%;
+        min-width: 2em;
+        -webkit-appearance: none;
+        appearance: none;
+        display: inline-block;
+        vertical-align: baseline;
     }
     input.cloze:focus { border-bottom-color: #1976d2; }
     input.cloze.correct {
@@ -755,6 +762,44 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
         return CVT.TextProcessor.convertFromSinh(a, CVT.Script[t.toUpperCase()]);
     }
 
+    let rulerSpan = null;
+    function getRulerSpan() {
+        if (!rulerSpan) {
+            rulerSpan = document.createElement('span');
+            rulerSpan.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:-9999px;left:-9999px;pointer-events:none;';
+            document.body.appendChild(rulerSpan);
+        }
+        return rulerSpan;
+    }
+
+    function autoSizeInput(input) {
+        if (!input) return;
+        const ruler = getRulerSpan();
+        const style = window.getComputedStyle(input);
+        ruler.style.fontFamily = style.fontFamily;
+        ruler.style.fontSize = style.fontSize;
+        ruler.style.fontWeight = style.fontWeight;
+        ruler.style.letterSpacing = style.letterSpacing;
+
+        const val = input.value || '';
+        const placeholder = input.placeholder || '';
+        const answer = input.dataset.answer || '';
+
+        ruler.textContent = val || placeholder || answer || ' ';
+        const width1 = ruler.getBoundingClientRect().width;
+
+        ruler.textContent = answer || ' ';
+        const width2 = ruler.getBoundingClientRect().width;
+
+        const maxMeasuredWidth = Math.max(width1, width2);
+        const finalWidth = Math.ceil(maxMeasuredWidth + 12);
+        input.style.width = finalWidth + 'px';
+    }
+
+    function autoSizeAllInputs() {
+        document.querySelectorAll('input.cloze').forEach(autoSizeInput);
+    }
+
     function changeScript(newScript) {
         if (newScript === currentScript) return;
         const container = document.getElementById('text-container');
@@ -785,6 +830,7 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
 
         currentScript = newScript;
         document.getElementById('script-select').value = currentScript;
+        autoSizeAllInputs();
         saveState();
     }
 
@@ -793,6 +839,10 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
         isRestoring = true;
         restoreState();
         setupSentenceMode();
+        autoSizeAllInputs();
+        if (document.fonts) {
+            document.fonts.ready.then(autoSizeAllInputs);
+        }
         updateProgress();
         requestAnimationFrame(() => {
             if (!sentenceMode && Number.isFinite(pendingRestoreScrollY)) {
@@ -835,6 +885,7 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
         window.addEventListener('beforeunload', saveState);
         window.addEventListener('pagehide', saveState);
         window.addEventListener('scroll', debounce(saveState, 250), {passive: true});
+        window.addEventListener('resize', debounce(autoSizeAllInputs, 100));
 
         document.getElementById('text-container').addEventListener('keyup', (e) => {
             if (e.target.tagName === 'INPUT' && e.target.classList.contains('cloze')) {
@@ -843,7 +894,10 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
             }
         });
         document.getElementById('text-container').addEventListener('input', (e) => {
-            if (e.target.tagName === 'INPUT' && e.target.classList.contains('cloze')) saveState();
+            if (e.target.tagName === 'INPUT' && e.target.classList.contains('cloze')) {
+                autoSizeInput(e.target);
+                saveState();
+            }
         });
 
         document.getElementById('hide-rate').addEventListener('input', (e) => {
@@ -887,6 +941,7 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
         inp.dataset.context = span.dataset.context;
         inp.size = span.dataset.word.length;
         inp.setAttribute('aria-label', 'Context: ' + span.dataset.context);
+        autoSizeInput(inp);
         return inp;
     }
 
@@ -899,6 +954,7 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
         document.querySelectorAll('.hideable').forEach(span => {
             if (ids.has(span.dataset.id)) span.replaceWith(makeInputFromSpan(span));
         });
+        autoSizeAllInputs();
     }
 
     function reshuffle() {
@@ -916,12 +972,14 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
         }
         resetProgress();
         setupSentenceMode();
+        autoSizeAllInputs();
     }
 
     function toggleAnswers() {
         document.querySelectorAll('input.cloze').forEach(inp => {
             if (!inp.readOnly) inp.placeholder = inp.placeholder ? '' : inp.dataset.answer;
         });
+        autoSizeAllInputs();
     }
 
     function revealAll() {
@@ -930,6 +988,7 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
             inp.classList.add('correct');
             inp.readOnly = true;
         });
+        autoSizeAllInputs();
         updateProgress();
     }
 
@@ -940,6 +999,7 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
             inp.readOnly = false;
             inp.placeholder = '';
         });
+        autoSizeAllInputs();
         resetProgress();
     }
 
@@ -1022,6 +1082,7 @@ const CVT = (function(){return(()=>{"use strict";var e={384:(e,r,n)=>{var a,t,o,
                     inp.readOnly = Boolean(saved.readOnly);
                     inp.classList.toggle('correct', Boolean(saved.correct));
                 });
+                autoSizeAllInputs();
             }
             sentenceMode = Boolean(state.sentenceMode);
             currentSentenceIndex = Number.isInteger(state.currentSentenceIndex) ? state.currentSentenceIndex : 0;
